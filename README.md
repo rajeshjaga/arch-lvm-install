@@ -30,7 +30,7 @@ exit
 
 ## SSH
 
-Enable sshd (should be done by default), change the /etc/ssh/ssd_config and change `PermitRootLogin ` to yes
+Enable sshd (should be done by default), Edit /etc/ssh/ssd_config and change `PermitRootLogin` to yes to enable login as root
 
 ```
 $ systemctl enable sshd
