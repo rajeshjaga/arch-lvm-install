@@ -30,10 +30,11 @@ exit
 
 ## SSH
 
-Enable sshd (should be done by default)
+Enable sshd (should be done by default), change the /etc/ssh/ssd_config and change `PermitRootLogin ` to yes
 
 ```
 $ systemctl enable sshd
+$ systemctl restart sshd
 ```
 
 set a password for the current user
@@ -42,7 +43,7 @@ set a password for the current user
 $ passwd
 ```
 
-## Write random data
+## Write random data (optional step)
 
 List blocks. In my case, my drives are nvme0n1 and nvme1n1. Your's might be the
 same, or the might be an sdx drive, such as sda or sdb.
@@ -81,13 +82,8 @@ the disk setup I have for my primary drive
 | 1         | default      | +512M       | ef00 |
 | 2         | default      | +4G         | ef02 |
 | 3         | default      | default     | 8309 |
+| 4         | default      | default     | 8302 |
 
-If you have a second drive for your home disk, then your table would be as 
-follows.
-
-| partition | first sector | last sector | code |
-|-----------|--------------|-------------|------|
-| 1         | default      | default     | 8302 |
 
 ## Encryption
 
@@ -98,34 +94,22 @@ $ modprobe dm-crypt
 $ modprobe dm-mod
 ```
 
-Setting up encryption on our luks lvm partiton
+Setting up encryption on our partitons
 
 ```
-$ cryptsetup luksFormat -v -s 512 -h sha512 /dev/nvme0n1p3
+$ cryptsetup luksFormat -v -s 512 -h sha512 /dev/{home,root - nvme0n1p[1-9]}
 ```
 
 Enter in your password and **Keep it safe**. There is no "forgot password" here.
 
 
-If you have a home partition, then initialize this as well
+Mount the drives( for all the drive you have encrypted):
 
 ```
-$ cryptsetup luksFormat -v -s 512 -h sha512 /dev/nvme1n1p1
+$ cryptsetup open /dev/nvme0n1p[1-9] home,root,luks_lvm (labeling disk, for multiple volumes)
 ```
 
-Mount the drives:
-
-```
-$ cryptsetup open /dev/nvme0n1p3 luks_lvm
-```
-
-If you have a home parition:
-
-```
-$ cryptsetup open /dev/nvme1n1p1 arch-home
-```
-
-## Volume setup
+## Volume setup (optional)
 
 Create the volume and volume group
 
@@ -186,16 +170,16 @@ $ lvcreate -n root -l +100%FREE arch
 FAT32 on EFI partiton
 
 ```
-$ mkfs.fat -F32 /dev/nvme0n1p1 
+$ mkfs.fat -F32 -n ESP /dev/nvme0n1p1 
 ```
 
 EXT4 on Boot partiton
 
 ```
-$ mkfs.ext4 /dev/nvme0n1p2
+$ mkfs.ext4 -L boot /dev/nvme0n1p2
 ```
 
-BTRFS on root
+BTRFS on root (do not format encrypted volume partitions directly it won't work)
 
 ```
 $ mkfs.btrfs -L root /dev/mapper/arch-root
@@ -207,15 +191,15 @@ BTRFS on home if exists
 $ mkfs.btrfs -L home /dev/mapper/arch-home
 ```
 
-Setup swap device
+Setup swap device (optional)
 
 ```
 $ mkswap /dev/mapper/arch-swap
 ```
 
-## Mounting
+## Mounting 
 
-Mount swap
+Mount swap (optional)
 
 ```
 $ swapon /dev/mapper/arch-swap
@@ -259,15 +243,14 @@ $ mount /dev/nvme0n1p1 /mnt/boot/efi
 ```
 
 ## Install arch
-
+Set the faster mirror list 
 ```
-$ pacstrap -K /mnt base linux linux-firmware
+$ reflector --country {country code} --sort rate --protocol https --save /etc/pacman.d/mirrorlist
 ```
 
-With base-devel
-
+Install base system
 ```
-$ pacstrap -K /mnt base base-devel linux linux-firmware
+$ pacstrap -K /mnt base linux linux-firmware base-devel grub vim git sof-firmware iwd dhcpcd dhcp
 ```
 
 Load the file table
@@ -283,18 +266,6 @@ $ arch-chroot /mnt /bin/bash
 ```
 
 ## Configuring
-
-### Text Editor
-
-Install a text editor
-
-```
-$ pacman -S neovim
-```
-
-```
-$ pacman -S nano
-```
 
 ### Decrypting volumes
 
@@ -405,7 +376,7 @@ Add in the following line at the bottom of the table
 arch-home      UUID=<uuid>    /secure/home_keyfile.bin
 ```
 
-Reload linux
+Regenerate linux
 
 ```
 $ mkinitcpio -p linux
@@ -422,12 +393,16 @@ $ grub-mkconfig -o /boot/efi/EFI/arch/grub.cfg
 
 ## System Configuration
 
-### Timezone
-
+Set Timezone:
 ```
-ln -sf /usr/share/zoneinfo/America/Chicago /etc/localtime
+$ ln -sf /usr/share/zoneinfo/{Region}/{Zone} /etc/localtime
 ```
 
+Synchronize system with hardware clock 
+```
+$ hwclock --systohc #to set system time to hardware
+$ hwclock --hctosys #to set hardware time to system
+```
 ### NTP
 
 ```
@@ -487,6 +462,13 @@ or
 $ echo "mymachine" > /etc/hostname
 ```
 
+### Set the tty font (optional)
+```
+$ pacman -S terminus-font
+$ echo "FONT=ter-u18b" >> /etc/vconsole
+$ systemctl enable systemd-vconsole-setup
+```
+
 ### Users
 
 First secure the root user by setting a password
@@ -504,7 +486,7 @@ $ pacman -S zsh
 Add a new user as follows
 
 ```
-$ useradd -m -G wheel -s /bin/zsh user
+$ useradd -mG wheel,audio,video,network -s /bin/zsh user
 ```
 
 set the password on the user
@@ -529,17 +511,47 @@ $ EDITOR=nvim visudo
 $ pacman -S networkmanager
 $ systemctl enable NetworkManager
 ```
-
-### Display Manager
-
+-or-
 ```
-$ pacman -S gnome
-```
-
-```
-$ systemctl enable gdm
+$ pacman -S iwd dhcpcd dhcp #iwd for intel cards and dhcpcd for ethernet
+$ usermod -aG dhcp,dhcpcd user
 ```
 
+### Desktop Environment and To start login manager (Display Manager)
+
+```
+$ pacman -S plasma sddm sddm-kcm
+```
+
+```
+$ systemctl enable sddm
+```
+! Note: installing this way will keep other applications as dependencies, so the other will be remove if you try and remove plasma
+
+
+### Pacman config (optional)
+```
+$ vim /etc/pacman.conf
+```
+Uncomment this lines
+```
+Color
+VerbosePkgLists
+```
+and add below this 
+```
+ILoveCandy
+```
+If you are planning to use steam and play games or install 32-bit apps,
+Uncomment this line in pacman.conf
+```
+[multilib]
+Include = /etc/pacman.d/mirrorlist
+```
+then 
+```
+$ pacman -Sy
+```
 
 ### Microcode
 
@@ -555,6 +567,24 @@ For intel
 $ pacman -S intel-ucode
 ```
 
+For vm change the grub config
+```
+$ vim /etc/default/grub
+```
+change `GRUB_GFXMODE` to 1920x1080 or your screen resolution 
+```
+GRUB_GFXMODE=1920x1080
+```
+Also for adding other os to grub, mount thier respective efi partiton,
+And Install `os-prober`. For Ex:
+```
+$ mkdir /win
+$ mount /dev/sda1 /win
+$ vim /etc/default/grub
+```
+Uncomment the line `GRUB_DISABLE_OS_PROBER` and keep to false
+
+Now to apply above grub changes 
 ```
 $ grub-mkconfig -o /boot/grub/grub.cfg
 $ grub-mkconfig -o /boot/efi/EFI/arch/grub.cfg
@@ -565,6 +595,6 @@ $ grub-mkconfig -o /boot/efi/EFI/arch/grub.cfg
 
 ```
 $ exit
-$ umount -R /mnt
+$ umount -a 
 $ reboot now
 ```
